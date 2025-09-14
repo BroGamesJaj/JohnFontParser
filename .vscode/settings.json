@@ -1,0 +1,24 @@
+{
+    "files.associations": {
+        "utility": "c",
+        "stdio.h": "c",
+        "hashmap.h": "c",
+        "string.h": "c",
+        "stdbool.h": "c",
+        "stdlib.h": "c",
+        "xiosbase": "c",
+        "chrono": "c",
+        "iterator": "c",
+        "xhash": "c",
+        "xmemory": "c",
+        "xutility": "c",
+        "cstdlib": "c",
+        "format": "c",
+        "forward_list": "c",
+        "initializer_list": "c",
+        "list": "c",
+        "vector": "c",
+        "xstring": "c",
+        "inttypes.h": "c"
+    }
+}

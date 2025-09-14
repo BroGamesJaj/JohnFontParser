@@ -1,0 +1,3 @@
+C:/dev/JohnFont/build/CMakeFiles/JohnFont.dir
+C:/dev/JohnFont/build/CMakeFiles/ALL_BUILD.dir
+C:/dev/JohnFont/build/CMakeFiles/ZERO_CHECK.dir
