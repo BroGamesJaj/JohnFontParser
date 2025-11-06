@@ -1,0 +1,26 @@
+
+
+loop contours
+    get the last point of contour
+    find first point of contour
+
+    loop points between first and last point
+        get 2 points next to each other (last and first is also needed)
+        if 2 points are same onCurve
+            put implied point
+
+    add insert count to end point of contour
+
+
+get 2 points:
+    p1 = i
+    p2 = ( i + 1 > last point ? i+1 % (last point + 1) + first point : i + 1)
+
+put implied point:
+    calc imp
+    push every point after p1 to right by 1
+    put imp after p1 
+    increment inserts
+    increment number of points
+    
+    

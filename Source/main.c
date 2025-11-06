@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <math.h>
+#include <limits.h>
+#include <float.h>
 #include "hashmap.h"
+#include "bmpMaker.h"
 
 // if 1 all 16bit or larger integers get swapped to Big-Endian
 #define CONVERT_TO_B 1 
@@ -184,90 +187,140 @@ bool FlagBit16(uint16_t flag, int index) {
     return ((1 << index) & flag) != 0;
 }
 
+//TODO: Fix impliedPoints 
+// known issues: 
+// -Less points get made
+// -Some points are in the wrong place
 bool AddImpliedPoints(Glyph* glyph, float scale) {
     int contourStart = 0;
     int newPointCount = 0;
-    for (size_t i = 0; i < glyph->numOfContours; i++) {
+    for (int i = 0; i < glyph->numOfContours; i++) {
+        int newPointsPerContour = 0;
         int endPointIndex = glyph->endPtsOfContours[i];
+        //printf("%d endPtsOfContours: %d\n",i,glyph->endPtsOfContours[i]);
         int pIndex;
+        //Find first onCurve point
         for (pIndex = contourStart; pIndex <= endPointIndex; pIndex++) {
             if(glyph->points[pIndex].isOnCurve){
                 break;
             }
         }
-        printf("endInd %zu: %u\n", i,  glyph->endPtsOfContours[i]);
-        for (size_t j = contourStart; j <= endPointIndex; j++) {
+
+        for (int j = contourStart; j <= endPointIndex; j++) {
             int currIndex = j + pIndex - contourStart;
             int nextIndex = (j + pIndex + 1 - contourStart) % (endPointIndex + 1);
             if(nextIndex < currIndex) nextIndex += contourStart;
             
             Point curr = glyph->points[currIndex];
             Point next = glyph->points[nextIndex];
-            printf("currIndex: %d, nextIndex: %d (%d,%d)\n", currIndex, nextIndex, curr.isOnCurve, next.isOnCurve);
-            if(curr.isOnCurve == next.isOnCurve && j <= endPointIndex) {
-                newPointCount++;
-            }
+            if(curr.isOnCurve == next.isOnCurve) newPointsPerContour++;
+            
         }
+        //printf("newPoints in contour %d: %d\n",i, newPointsPerContour);
         contourStart = endPointIndex + 1;
+        newPointCount += newPointsPerContour;
     }
-    printf("new Point Count: %d\n", newPointCount);
+
+    //debug: print new point count
+    //printf("new Point Count: %d\n", newPointCount);
     size_t newPointNum = glyph->numOfPoints + newPointCount;
     Point* newPoints = realloc(glyph->points, sizeof(Point) * newPointNum);
     if (newPoints == NULL) {
         return true;
     }
     glyph->points = newPoints;
+    //glyph->numOfPoints = newPointNum;
 
-    contourStart = 0;
-    int newIndex = glyph->numOfPoints;
+    int firstPointInContourIndex = 0;
     int insertCount = 0;
 
-    for (size_t i = 0; i < glyph->numOfContours; i++) {
-        printf("insertCount: %d\n", insertCount);
+    for(int contourIndex = 0; contourIndex < glyph->numOfContours; contourIndex++){
+        glyph->endPtsOfContours[contourIndex] += insertCount;
+        
+        int lastPointInContourIndex = glyph->endPtsOfContours[contourIndex];
+        
+        for(int currPointIndex = firstPointInContourIndex; currPointIndex <= lastPointInContourIndex; currPointIndex++){
+
+            Point p1 = glyph->points[currPointIndex];
+            int p2Index = ( currPointIndex + 1 > lastPointInContourIndex ? firstPointInContourIndex : currPointIndex+1);
+            Point p2 = glyph->points[p2Index];
+
+            if(p1.isOnCurve == p2.isOnCurve){
+                Point impliedPoint;
+                impliedPoint.x = (p1.x + p2.x) / 2.0f * scale;
+                impliedPoint.y = (p1.y + p2.y) / 2.0f * scale;
+                impliedPoint.isOnCurve = !p1.isOnCurve;
+
+                for (int afterCurr = glyph->numOfPoints - 1; afterCurr > currPointIndex; afterCurr--)
+                    glyph->points[afterCurr + 1] = glyph->points[afterCurr];
+                glyph->points[currPointIndex + 1] = impliedPoint;
+
+                currPointIndex++;
+                lastPointInContourIndex++;
+                insertCount++;
+                glyph->numOfPoints++;
+            }
+
+        }
+
+        glyph->endPtsOfContours[contourIndex] = lastPointInContourIndex;
+        firstPointInContourIndex = lastPointInContourIndex + 1;
+    }
+
+
+    /*
+    contourStart = 0;
+    int insertCount = 0;
+
+    for (int i = 0; i < glyph->numOfContours; i++) {
         glyph->endPtsOfContours[i] += insertCount;
         int endPointIndex = glyph->endPtsOfContours[i];
-        int pIndex;
-        for (pIndex = contourStart; pIndex < endPointIndex; pIndex++) {
-            if(glyph->points[pIndex].isOnCurve){
+        int firstOnIndex;
+        for (firstOnIndex = contourStart; firstOnIndex <= endPointIndex; firstOnIndex++) {
+            if(glyph->points[firstOnIndex].isOnCurve){
                 break;
             }
         }
         insertCount = 0;
         
-        for (size_t j = contourStart; j <= endPointIndex; j++) {
-            int currIndex = j + pIndex - contourStart;
-            int nextIndex = (j + pIndex + 1 - contourStart) % (endPointIndex + 1);
-            if(nextIndex < currIndex) nextIndex += contourStart;
+        for (int j = contourStart; j <= endPointIndex; j++) {
+            bool end = false;
+            int currIndex = j + firstOnIndex - contourStart;
+            int nextIndex = (j + firstOnIndex + 1 - contourStart) % (endPointIndex + 1);
+            if(nextIndex < currIndex) nextIndex += contourStart, end = true;
             Point curr = glyph->points[currIndex];
             Point next = glyph->points[nextIndex];
             
-            if(curr.isOnCurve == next.isOnCurve && j <= endPointIndex) {
+            if(curr.isOnCurve == next.isOnCurve) {
                 Point impliedPoint;
                 impliedPoint.x = (curr.x + next.x) / 2.0f * scale;
                 impliedPoint.y = (curr.y + next.y) / 2.0f * scale;
                 impliedPoint.isOnCurve = !curr.isOnCurve;
 
-                for (size_t k = glyph->numOfPoints - 1; k >= currIndex + 1; k--) {
+                for (int k = glyph->numOfPoints - 1; k >= currIndex + 1; k--) {
                     if (k + 1 < newPointNum) {
                         glyph->points[k + 1] = glyph->points[k];
                     }
                 }
-                printf("newPoint: %u (%d, %d) prev: %d, next: %d\n", currIndex + 1, impliedPoint.x, impliedPoint.y, currIndex, nextIndex);
                 glyph->points[currIndex + 1] = impliedPoint;
                 insertCount++;
                 glyph->numOfPoints++;
                 
                 endPointIndex++;
                 
-                newIndex++;
             }
-            printf("endPointIndex: %d\n", endPointIndex);
+            if(end) break;
         }
-        glyph->endPtsOfContours[i] += insertCount;
+        printf("insertCount: %d\n",insertCount);
+
+        glyph->endPtsOfContours[i] = endPointIndex;
         contourStart = glyph->endPtsOfContours[i] + 1;
     }
-    for (size_t i = 0; i < glyph->numOfContours; i++) {
-        printf("endInd %zu: %u\n", i,  glyph->endPtsOfContours[i]);
+    */
+    if(insertCount != newPointCount) {
+        
+        printf("Failed to add all implied points!\n");
+        return true;
     }
     
     return false;
@@ -323,7 +376,7 @@ bool ReadSimpleGlyph(Glyph* glyph, FILE* file){
 
         glyph->endPtsOfContours = calloc(glyph->numOfContours, sizeof(uint16_t));
         for (size_t i = 0; i < glyph->numOfContours; i++) {
-            ReadInt16(&glyph->endPtsOfContours[i], file);
+            ReadUInt16(&glyph->endPtsOfContours[i], file);
         }
     } else {
         printf("number of Contours is 0\n");
@@ -334,7 +387,6 @@ bool ReadSimpleGlyph(Glyph* glyph, FILE* file){
     SkipBytes(glyph->instructionLength, file);
     glyph->numOfPoints = glyph->endPtsOfContours[glyph->numOfContours - 1] + 1;
     glyph->flags = calloc(glyph->numOfPoints, sizeof(uint8_t));
-    printf("number of points: %u\n", glyph->numOfPoints);
     for (size_t i = 0; i < glyph->numOfPoints; i++) {
         ReadUInt8(&glyph->flags[i], file);
         if(FlagBit(glyph->flags[i], 3)) {
@@ -351,14 +403,8 @@ bool ReadSimpleGlyph(Glyph* glyph, FILE* file){
     }
     glyph->points = calloc(glyph->numOfPoints, sizeof(Point));
     ReadCoordinates(glyph->points, glyph->numOfPoints, glyph->flags, file);
-    for (size_t i = 0; i < glyph->numOfContours; i++) {
-        printf("endInd %zu: %u\n", i,  glyph->endPtsOfContours[i]);
-    }
     AddImpliedPoints(glyph, 1);
-    for (size_t i = 0; i < glyph->numOfContours; i++) {
-        printf("endInd %zu: %u\n", i,  glyph->endPtsOfContours[i]);
-    }
-    printf("numOfPoints: %u\n", glyph->numOfPoints);
+    
     return false;
 }
 
@@ -377,18 +423,18 @@ bool ReadCompositeGlyph(Glyph* glyph, uint32_t currentOffset, FILE* file) {
         currentOffset += 16 * 2;
         printf("glyph index: %u\n", glyph->glyphIndex);
 
-        for (int i = 15; i >= 0; i--) {
-            printf("%d", (flags >> i) & 1);
-        }
-        printf("\n");
+        //debug: print flags
+        //for (int i = 15; i >= 0; i--) 
+        //    printf("%d", (flags >> i) & 1);
+        //printf("\n");
         if (FlagBit16(flags, 0)) {
             FWord argument1, argument2;
             ReadInt16(&argument1, file);
             ReadInt16(&argument2, file);
         } else {
             uint8_t arg1,arg2;
-            ReadInt8(&arg1, file);
-            ReadInt8(&arg2, file);
+            ReadUInt8(&arg1, file);
+            ReadUInt8(&arg2, file);
         }
         if (FlagBit16(flags, 2) ) {
             F2DOT14  scale;
@@ -426,9 +472,9 @@ bool ReadAnyGlyph(Font* font, uint16_t index, FILE* file) {
     ReadInt16(&numOfContours, file);
     font->glyphs[index].numOfContours = numOfContours;
     font->glyphs[index].glyphIndex = index;
-    printf("number of contours: %d\n", font->glyphs[index].numOfContours);
     if(numOfContours < 0){
         printf("composite glyph\n");
+        return true;
         //ReadCompositeGlyph(&font->glyphs[index], font->glyphOffsets.offsets[index], file);
         font->glyphs[index].glyphIndex = index;
     } else {
@@ -518,12 +564,13 @@ bool GetCharMapping(Hashmap* tables, FILE* file) {
     uint16_t numOfTables;
     ReadUInt16(&numOfTables, file);
     EncodingRecord* encodingRecords = calloc(numOfTables, sizeof(EncodingRecord));
-    printf("number of char tables: %u\n", numOfTables);
-    for (size_t i = 0; i < numOfTables; i++) {
+    if(!encodingRecords) return true;
+    for (int i = 0; i < numOfTables; i++) {
         ReadUInt16(&encodingRecords[i].platformID, file);
         ReadUInt16(&encodingRecords[i].encodingID, file);
         ReadUInt32(&encodingRecords[i].subtableOffset, file);
         encodingRecords[i].subtableOffset += tableOffset;
+        //debug: tables
         //printf("subtable index %zu: platformID: %u, encodingID: %u, offset: %u\n", i, encodingRecords[i].platformID, encodingRecords[i].encodingID, encodingRecords[i].subtableOffset);
     }
 
@@ -532,7 +579,7 @@ bool GetCharMapping(Hashmap* tables, FILE* file) {
     // encoding records are allways ordered first by platformID asc, then by encodingID asc.
     // Format 12 should be used first if not supported format 4.
     // TODO: format 14 + format 12 OR 4, if font has pID = 0 & eID = 5.
-    for (size_t i = numOfTables; i >= 0; i--) {
+    for (int i = numOfTables - 1; i >= 0; i--) {
         if(platform == 3){
             if(encodingRecords[i].platformID == 3 && encodingRecords[i].encodingID == 10){
                 formatToUse = encodingRecords[i];
@@ -553,6 +600,7 @@ bool GetCharMapping(Hashmap* tables, FILE* file) {
             }
         } else {
             printf("Platform not supported!\n");
+            free(encodingRecords);
             return true;
         }
     }
@@ -576,7 +624,7 @@ bool GetCharMapping(Hashmap* tables, FILE* file) {
         ReadUInt32(&numOfGroups, file);
         printf("number of groups: %u\n", numOfGroups);
         uint32_t startCharCode, endCharCode, startGlyphID;
-        for (size_t i = 0; i < numOfGroups; i++) {
+        for (int i = 0; i < numOfGroups; i++) {
             ReadUInt32(&startCharCode, file);
             ReadUInt32(&endCharCode, file);
             ReadUInt32(&startGlyphID, file);
@@ -595,6 +643,7 @@ bool GetCharMapping(Hashmap* tables, FILE* file) {
         return true;
     }
 
+    free(encodingRecords);
     return false;
 }
 
@@ -608,13 +657,12 @@ bool BezierInterpolation(Point p0, Point p1, Point p2, float t, Point* result){
 }
 
 bool CalcQuadraticRoots(float a, float b, float c, float* retRootA, float* retRootB) {
-    *retRootA = NAN;
-    *retRootB = NAN;
-    if (a == 0) {
+    if (fabs(a) < 1e-4f) {
         if (b != 0) *retRootA = -c / b;
     } else {
         float discriminant = b * b - 4 * a * c;
-        if(discriminant >= 0) {
+        if(discriminant > -1e-4f) {
+            if (discriminant < 0) discriminant = 0;
             float s = sqrt(discriminant);
             *retRootA = (-b + s) / (2 * a);
             *retRootB = (-b - s) / (2 * a);
@@ -623,33 +671,51 @@ bool CalcQuadraticRoots(float a, float b, float c, float* retRootA, float* retRo
     return false;
 }
 
-bool RayCastIntersections(Point ray, Point p0, Point p1, Point p2, int* numOfIntersections) {
-    float a = p0.y - 2 * p1.y + p2.y;
-    float b = 2 * (p1.y - p0.y);
-    float c = p0.y;
-    float t0 = NAN, t1 = NAN;
-    CalcQuadraticRoots(a, b, c - ray.y, &t0, &t1);
-    int num = 0;
+//TODO: Change back to intersection counting
+bool RayCastIntersections(Point ray, Point p0, Point p1, Point p2, float* closestCurveDist, Point* closestP1, bool* inside) {
+    float ax = p0.x - 2 * p1.x + p2.x;
+    float bx = 2 * (p1.x - p0.x);
+    float cx = p0.x;
 
-    float eps = 1e-6f;
-    for (int i = 0; i < 2; i++) {
-        float t = (i == 0) ? t0 : t1;
-        if (isnan(t) || t < 0.0f || t > 1.0f) continue;
-        Point bez;
-        BezierInterpolation(p0, p1, p2, t, &bez);
-        if (bez.x > ray.x + eps && bez.y != p0.y) num++;
+    float ay = p0.y - 2 * p1.y + p2.y;
+    float by = 2 * (p1.y - p0.y);
+    float cy = p0.y;
+    float t0 = -1, t1 = -1;
+    if(p0.y < ray.y && p1.y <= ray.y && p2.y < ray.y) return false;
+    if(p0.y > ray.y && p1.y >= ray.y && p2.y > ray.y) return false;
+    CalcQuadraticRoots(ay, by, cy - ray.y, &t0, &t1);
+    const float er = 0 - 1e-4f, er2 = 1 + 1e-4f;
+    bool valid0 = t0 >= er  && t0 <= er2;
+    bool valid1 = t1 >= er && t1 <= er2;
+    if (!valid0 && !valid1) return false;
+
+    float intersect0 = -1, intersect1 = -1;
+    intersect0 = valid0 ? ax * t0 * t0 + bx * t0 + cx : FLT_MAX;
+    intersect1 = valid1 ? ax * t1 * t1 + bx * t1 + cx : FLT_MAX;
+    bool use0 = valid0 && valid1 ? intersect0 < intersect1 : valid0;
+    float intersectDist = use0 ? intersect0 : intersect1;
+    bool isCloser = intersectDist < *closestCurveDist;
+    bool isSamePoint = fabs(intersectDist - *closestCurveDist ) < 1e-6f;
+    if(isCloser && intersectDist >= ray.x || isSamePoint) {
+        if(isSamePoint && p1.x > closestP1->x) return false;
+
+        float tuse = use0 ? t0 : t1;
+        *inside = p0.y > p2.y;
+        *closestCurveDist = intersectDist;
+        *closestP1 = p1;
     }
     
-    *numOfIntersections += num;
     return false;
 }
-
 bool isPointInsideGlyph(Point castOrigin, Glyph glyph) {
-    int numOfIntersections = 0;
+    //int numOfIntersections = 0;
+    float closestCurveDist = FLT_MAX;
+    Point closestP1 = {INT16_MAX, INT16_MAX, false};
+    bool inside = false;
     size_t lastPoint = 0;
 
     int contourStart = 0;
-    for (size_t contourIndex = 0; contourIndex < glyph.numOfContours; contourIndex++) {
+    for (int contourIndex = 0; contourIndex < glyph.numOfContours; contourIndex++) {
         int contourEnd = glyph.endPtsOfContours[contourIndex];
         int firstOnCurvePointIndex;
         for (firstOnCurvePointIndex = contourStart; firstOnCurvePointIndex <= contourEnd; firstOnCurvePointIndex++) {
@@ -667,60 +733,67 @@ bool isPointInsideGlyph(Point castOrigin, Glyph glyph) {
             Point mid = glyph.points[midIndex];
             Point end = glyph.points[endIndex];
 
-            RayCastIntersections(castOrigin, start, mid, end, &numOfIntersections);
+            RayCastIntersections(castOrigin, start, mid, end, &closestCurveDist, &closestP1, &inside); // &numOfIntersections
         }
-        
 
         contourStart = contourEnd + 1;
     }
-    return (numOfIntersections % 2) != 0;
+
+    return inside;// (numOfIntersections % 2) != 0;
 }
 
-void GlyphToBitmap(uint8_t *bitmap, Glyph glyph, int scale, int16_t xMin, int16_t yMin, int16_t xMax, int16_t yMax) {
-    for (size_t i = 0; i < glyph.numOfPoints; i++) {
-        printf("point %zu: (%d,%d)\n", i, glyph.points[i].x, glyph.points[i].y);
-    }
+void GlyphToBitmap(uint8_t *bitmap, size_t bitmapSize,Glyph glyph, int scale, int16_t xMin, int16_t yMin, int16_t xMax, int16_t yMax) {
     
-    FILE *fp = fopen("output.txt", "w");
-
-    int width = xMax - xMin;
-    int height = yMax - yMin;
-    //int16_t xMax = glyph.bounds.xMax / scale;
-    //int16_t yMax = glyph.bounds.yMax / scale;
-    printf("bounds: (%d, %d) (%d, %d)\n", xMin, yMin, xMax, yMax);
+    int width = (xMax - xMin);
+    int height = (yMax - yMin);
+    //debug: print bounds
+    //printf("bounds: (%d, %d) (%d, %d)\n", xMin, yMin, xMax, yMax);
     for (int y = yMin; y < yMax; y++) {
         for (int x = xMin; x < xMax; x++) {
-            int idx = (y - yMin) * width + (x - xMin);
-            Point rayOrigin;
-            rayOrigin.x = x / scale;
-            rayOrigin.y = y / scale;
-            if(isPointInsideGlyph(rayOrigin, glyph)){
+            int idx = ((y - yMin) * (xMax - xMin) + (x - xMin)) * 3;
+    
+            bitmap[idx] = 0;
+            bitmap[idx + 1] = 0;
+            bitmap[idx + 2] = 0;
+    
+            Point rayOrigin = { x * scale, y * scale };
+    
+            if (isPointInsideGlyph(rayOrigin, glyph)) {
                 bitmap[idx] = 255;
+                bitmap[idx + 1] = 255;
+                bitmap[idx + 2] = 255;
             }
-            
+    
+            //debug: show where points are
+            /*
             for (size_t i = 0; i < glyph.numOfPoints; i++) {
-                int16_t distx = glyph.points[i].x / scale;
-                int16_t disty = glyph.points[i].y / scale;
-                if((distx - x)*(distx - x) + (disty - y)*(disty - y) < (50 * (i + 1))) {
-                    
-                    if(glyph.points[i].isOnCurve) {
-                        bitmap[idx] = 100;
+                int16_t px = glyph.points[i].x / scale;
+                int16_t py = glyph.points[i].y / scale;
+                int distSq = (px - x) * (px - x) + (py - y) * (py - y);
+    
+                if (distSq < (50 * (i + 1))) {
+                    if (glyph.points[i].isOnCurve) {
+                        bitmap[idx] = 0;
+                        bitmap[idx + 1] = i+100 % 255;
+                        bitmap[idx + 2] = 0;
                     } else {
-                        bitmap[idx] = 200;
+                        bitmap[idx] = i+100 % 255;
+                        bitmap[idx + 1] = 0;
+                        bitmap[idx + 2] = 0;
                     }
-                
                     break;
                 }
-            
             }
-            
-            fprintf(fp, "%u", bitmap[idx]);
-            if (x < xMax - 1) fprintf(fp, ",");
-
+            */
         }
-        fprintf(fp, "\n");
     }
-    fclose(fp);
+    char filename[20];
+
+    sprintf(filename, "%u.bmp", glyph.glyphIndex);
+    FILE* bmp = fopen(filename,"wb");
+    MakeBMP(bmp,bitmap, width, height, 24, 0, 2835, 2835);
+    fclose(bmp);
+    printf("%s done\n",filename);
 }
 
 int main(int argc, char** argv){
@@ -738,7 +811,8 @@ int main(int argc, char** argv){
     // next 2 bytes are the number of tables
     
     ReadUInt16(&font.numOfTables, file);
-    printf("numOfTables: %u\n", font.numOfTables);
+    //debug: print numOfTables
+    //printf("numOfTables: %u\n", font.numOfTables);
     // Currently skipping the rest of the table 2 bytes each
     // TODO: searchRange, entrySelector and rangeShift 
     SkipBytes(6, file);
@@ -769,7 +843,8 @@ int main(int argc, char** argv){
     JumpToTable("maxp", &font.tables, file);
     SkipBytes(4, file);
     ReadUInt16(&font.numOfGlyphs, file);
-    printf("number of Glyphs: %u\n", font.numOfGlyphs);
+    //debug: print numOfGlyphs
+    //printf("number of Glyphs: %u\n", font.numOfGlyphs);
 
     GetOffsetOfAllGlyphs(&font, file);
     GetCharMapping(&font.tables, file);
@@ -778,17 +853,17 @@ int main(int argc, char** argv){
     JumpToTable("glyf", &font.tables, file);
 
     font.glyphs = calloc(font.numOfGlyphs, sizeof(Glyph));
-    /*
-    for (size_t i = 0; i < 40; i++) {
-        ReadAnyGlyph(&font, i, file);
-    }
-    */
-   int glyphToPrint = 62;
-    ReadAnyGlyph(&font, glyphToPrint, file);
+    printf("numOfGlyphs: %d\n", font.numOfGlyphs);
+    //for(int i = 1192; i < 1200;i++)
+    //    ReadAnyGlyph(&font, i, file);
+    for(int i = 0; i < font.numOfGlyphs; i++){
+
+    int glyphToPrint = i;
+    if(ReadAnyGlyph(&font, glyphToPrint, file)) continue;
     uint8_t* bitmap;
-    int scale = 1;
-    int16_t xMax = -32768, yMax = -32768;
-    int16_t xMin = 32767, yMin = 32767;
+    int scale = 2;
+    int16_t xMax = INT16_MIN, yMax = INT16_MIN;
+    int16_t xMin = INT16_MAX, yMin = INT16_MAX;
     for (size_t i = 0; i < font.glyphs[glyphToPrint].numOfPoints; i++){
         if(xMax < font.glyphs[glyphToPrint].points[i].x){
             xMax = font.glyphs[glyphToPrint].points[i].x;
@@ -803,14 +878,30 @@ int main(int argc, char** argv){
             yMin = font.glyphs[glyphToPrint].points[i].y;
         }
     }
+    xMax /= scale;
+    yMax /= scale;
+    xMin /= scale;
+    yMin /= scale;
+    //temp so it looks better while debugging
     xMax += 200;
     yMax += 200;
     xMin -= 200;
     yMin -= 200;
-    bitmap = calloc((abs(yMin) + yMax)  * (abs(xMin) + xMax) / scale, sizeof(uint8_t));
-    printf("glyph nOfCon: %d, nOfPoints: %u\n", font.glyphs[glyphToPrint].numOfContours, font.glyphs[glyphToPrint].numOfPoints);
-    GlyphToBitmap(bitmap, font.glyphs[glyphToPrint], scale, xMin, yMin, xMax, yMax);
+    size_t bitmapSize = (abs(yMin) + yMax)  * (abs(xMin) + xMax) * 3;
+
+    //debug bitmap size
+    //printf("bitmapSize: %zu\n",bitmapSize);
+    bitmap = calloc(bitmapSize, sizeof(uint8_t));
+    if(!bitmap){
+        printf("Failed bitmap calloc!");
+    }else{
+
+    //debug: print glyph numOfContours and points
+    //printf("glyph nOfCon: %d, nOfPoints: %u\n", font.glyphs[glyphToPrint].numOfContours, font.glyphs[glyphToPrint].numOfPoints);
+    GlyphToBitmap(bitmap, bitmapSize, font.glyphs[glyphToPrint], scale, xMin, yMin, xMax, yMax);
     free(bitmap);
+    }
+    }
     DestroyFont(&font);
 
     fclose(file);
